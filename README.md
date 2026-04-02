@@ -6,7 +6,7 @@ O projeto consiste no desenvolvimento de um **workflow** em **R/Bioconductor**, 
 
 ## Conjunto de Dados
 
-- **Fonte:** [cBioPortal](https://www.cbioportal.org/study/summary?id=prad_tcga)  
+- **Fonte:** [cBioPortal] (https://www.cbioportal.org/study/summary?id=prad_tcga)  
 - **Tipos de Dados:** Expressão Génica (RNA-seq)  
 - **Dimensão:** 500 amostras  
 
