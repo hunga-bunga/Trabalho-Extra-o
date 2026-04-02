@@ -6,7 +6,7 @@ O projeto consiste no desenvolvimento de um **workflow** em **R/Bioconductor**, 
 
 ## Conjunto de Dados
 
-Os dados utilizados neste trabalho foram obtidos do estudo **Prostate Adenocarcinoma (TCGA, Firehose Legacy)** disponível no [cBioPortal](https://www.cbioportal.org/study/summary?id=prad_tcga).  
+Os dados utilizados neste trabalho foram obtidos do estudo **Prostate Adenocarcinoma (TCGA, Firehose Legacy)** disponível no [cBioPortal] (https://www.cbioportal.org/study/summary?id=prad_tcga).  
 
 - **Tipo de Dados:** Expressão Génica (RNA-seq)  
 - **Dimensão:** 500 amostras  
