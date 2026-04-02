@@ -1,0 +1,205 @@
+---
+title: "TCGA"
+author: "David Brandão, Fábio Mendes, Rafael Moreira"
+date: "2026-04-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Os dados foram obtidos através do pacote TCGAbiolinks do R, que acede diretamente ao Genomic Data Commons (GDC) do NCI, e estão também disponíveis no cBioPortal para visualização online. Optámos por estudar o cancro da próstata (TCGA-PRAD), dado que se trata de um tema de elevada relevância clínica, sendo o segundo cancro mais comum em homens e com elevada heterogeneidade molecular.
+A amostra selecionada inclui principalmente adenocarcinoma da próstata (tipo histológico predominante), com foco em amostras de Tumor Primário (TP) e Tecido Normal (NT), totalizando cerca de 500 casos com dados de expressão génica por RNA-Seq (STAR-Counts).
+Além disso, consideraram-se variáveis clínicas distintas como idade ao diagnóstico (tipicamente 55-70 anos).
+De acordo com a descrição oficial, este projeto TCGA baseia-se no perfil transcriptómico de tumores primários de próstata, anonimizados e processados para identificar alterações somáticas e diferenças entre tumor e normal.
+Este conjunto de dados é particularmente relevante, pois permite estudar padrões de expressão diferencial (como em PCA3 e KLK3) e alterações genómicas associadas à progressão do cancro da próstata, contribuindo para identificação de biomarcadores com potencial prognóstico e terapêutico.
+
+```{r cars}
+#TCGA-PRAD
+
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(edgeR)
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+#Aquisição dos dados
+query <- GDCquery(
+  project = "TCGA-PRAD",
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification",
+  workflow.type = "STAR - Counts"
+)
+
+GDCdownload(query)
+dados <- GDCprepare(query)
+
+#Extração da matriz de contagens e metadados
+matriz_bruta <- assay(dados, "unstranded")
+metadados <- as.data.frame(colData(dados))
+
+dim(matriz_bruta)
+dim(metadados)
+head(metadados)
+
+#Seleção das amostras de interesse
+amostras_validas <- metadados$shortLetterCode %in% c("TP", "NT")
+metadados_filtrados <- metadados[amostras_validas, ]
+matriz_filtrada <- matriz_bruta[, amostras_validas]
+
+#Preparação do objeto DGEList
+dge <- DGEList(counts = matriz_filtrada)
+
+#Filtragem de genes com baixa expressão
+keep <- filterByExpr(dge, group = metadados_filtrados$shortLetterCode)
+dge <- dge[keep, , keep.lib.sizes = FALSE]
+
+#Normalização 
+dge <- calcNormFactors(dge, method = "TMM")
+
+#Matriz normalizada
+logcpm <- cpm(dge, log = TRUE, prior.count = 1)
+
+#Sumarização clínica
+table(metadados_filtrados$shortLetterCode)
+table(metadados_filtrados$gender)
+summary(metadados_filtrados$age_at_diagnosis)
+table(metadados_filtrados$vital_status)
+
+#Gráficos 
+par(mfrow = c(2,2))
+
+barplot(
+  table(metadados_filtrados$shortLetterCode),
+  col = c("red", "steelblue"),
+  main = "Distribuição por tipo de amostra",
+  ylab = "Número de amostras",
+  las = 1
+)
+
+
+hist(
+  metadados_filtrados$age_at_diagnosis,
+  breaks = 20,
+  col = "lightgreen",
+  main = "Distribuição da idade",
+  xlab = "Frequência",
+  ylab = "Idade"
+)
+
+boxplot(
+  logcpm[, 1:min(50, ncol(logcpm))],
+  outline = FALSE,
+  las = 2,
+  col = "gray",
+  main = "Distribuição global da expressão",
+  ylab = "log-CPM"
+)
+
+par(mfrow = c(1,1))
+
+#Seleção de genes de interesse
+
+genes_interesse <- c("PCA3", "KLK3")
+
+#Mapear nomes de genes para IDs Ensembl
+anotacao_genes <- as.data.frame(rowData(dados))
+anotacao_genes$ensembl <- rownames(anotacao_genes)
+
+ids_interesse <- sapply(genes_interesse, function(g) {
+  x <- anotacao_genes$ensembl[anotacao_genes$gene_name == g]
+  if (length(x) > 0) x[1] else NA
+})
+
+ids_interesse
+
+#Expressão dos genes de interesse
+expr_pca3 <- logcpm[ids_interesse["PCA3"], , drop = TRUE]
+expr_klk3 <- logcpm[ids_interesse["KLK3"], , drop = TRUE]
+
+dados_pca3 <- data.frame(
+  expressao = as.numeric(expr_pca3),
+  grupo = metadados_filtrados$shortLetterCode
+)
+
+dados_klk3 <- data.frame(
+  expressao = as.numeric(expr_klk3),
+  grupo = metadados_filtrados$shortLetterCode
+)
+
+#Visualização da expressão dos genes de interesse
+boxplot(expressao ~ grupo, data = dados_pca3,
+        col = c("red", "steelblue"),
+        main = "Expressão de PCA3",
+        ylab = "log-CPM", xlab = "Grupo")
+
+boxplot(expressao ~ grupo, data = dados_klk3,
+        col = c("red", "steelblue"),
+        main = "Expressão de KLK3",
+        ylab = "log-CPM", xlab = "Grupo")
+
+#Teste univariado de Wilcoxon
+wilcox.test(expressao ~ grupo, data = dados_pca3)
+wilcox.test(expressao ~ grupo, data = dados_klk3)
+
+#Modelo de expressão diferencial com DESeq2
+dds <- DESeqDataSetFromMatrix(
+  countData = matriz_filtrada,
+  colData = metadados_filtrados,
+  design = ~ shortLetterCode
+)
+
+dds <- DESeq(dds)
+res <- results(dds, contrast = c("shortLetterCode", "TP", "NT"))
+res <- res[order(res$padj), ]
+
+#Limpeza e anotação dos resultados
+res_df <- as.data.frame(res)
+res_df$ensembl <- rownames(res_df)
+
+anotacao <- as.data.frame(rowData(dados))
+anotacao$ensembl <- rownames(anotacao)
+
+res_annot <- merge(res_df, anotacao, by = "ensembl", all.x = TRUE)
+
+#Genes significativos
+res_annot$significativo <- ifelse(
+  !is.na(res_annot$padj) & res_annot$padj < 0.05 & abs(res_annot$log2FoldChange) > 1,
+  "Significativo",
+  "Nao significativo"
+)
+
+table(res_annot$significativo)
+
+#Volcano plot
+ggplot(res_annot, aes(x = log2FoldChange, y = -log10(padj), color = significativo)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("gray", "red")) +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot - Tumor Primário vs Tecido Normal",
+    x = "Log2 Fold Change",
+    y = "-Log10 padj"
+  )
+
+
+
+
+```
+#Analise Dos Gráficos
+
+Na distribuição da idade, observa-se que a maioria das amostras se concentra aproximadamente entre os 55 e os 70 anos, o que é consistente com um cohort de cancro da próstata em idade mais avançada. 
+#Há alguns outliers com idades mais baixas, incluindo amostras na faixa dos 40 e poucos anos, e também alguns casos mais extremos com idade mais elevada, acima dos 70 anos.
+
+Nos boxplots de expressão, PCA3 apresenta uma diferença mais acentuada entre TP e NT, com tendência para maior expressão no tumor, enquanto KLK3 também mostra diferença entre grupos, mas com maior sobreposição entre as distribuições. 
+Os pontos fora dos “bigodes” representam outliers, isto é, amostras com expressão muito abaixo ou acima da maioria; no PCA3 aparecem valores muito baixos no grupo NT e alguns valores extremos no TP, e no KLK3 há também observações atípicas nos dois grupos.
+
+No volcano plot, os genes significativos aparecem concentrados nas extremidades, indicando mudanças fortes de expressão entre tumor e tecido normal, enquanto os genes próximos do centro têm alterações pequenas e/ou não significativas. 
+Este padrão sugere uma resposta biológica ampla do tumor, com vários genes simultaneamente ativados e reprimidos.
+
